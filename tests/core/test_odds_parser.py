@@ -1,8 +1,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from oddsharvester.core.market_extraction.odds_parser import OddsParser, parse_odds_value
+from oddsharvester.core.market_extraction.odds_parser import (OddsParser,
+                                                              parse_odds_value)
 
 
 class TestOddsParser:
@@ -99,7 +99,7 @@ class TestOddsParser:
         assert len(result) == 0
 
     def test_parse_market_odds_missing_data(self, odds_parser):
-        """Test parsing odds when a bookmaker has incomplete data."""
+        """Keep available bookmaker prices and mark missing markets as unknown."""
         # Arrange
         odds_labels = ["1", "X", "2", "Extras"]
 
@@ -107,7 +107,12 @@ class TestOddsParser:
         result = odds_parser.parse_market_odds(self.SAMPLE_HTML_ODDS, "FullTime", odds_labels)
 
         # Assert
-        assert len(result) == 0
+        assert len(result) == 2
+        assert result[0]["1"] == "1.90"
+        assert result[0]["X"] == "3.50"
+        assert result[0]["2"] == "4.20"
+        assert result[0]["Extras"] is None
+        assert result[1]["Extras"] is None
 
     def test_parse_market_odds_error_handling(self, odds_parser):
         """Test error handling during odds parsing."""
@@ -125,6 +130,17 @@ class TestOddsParser:
 
         # Assert
         assert len(result) == 0  # Should handle error gracefully
+
+    def test_parse_market_odds_empty_bookmaker_values_are_skipped(self, odds_parser):
+        html_without_odds = """
+        <div class="border-black-borders flex h-9">
+            <img class="bookmaker-logo" title="Bookmaker1">
+        </div>
+        """
+        result = odds_parser.parse_market_odds(
+            html_without_odds, "FullTime", ["1", "X", "2"]
+        )
+        assert result == []
 
     def test_parse_market_odds_duplicate_odds_removal(self, odds_parser):
         """Test that duplicate odds values are properly cleaned."""

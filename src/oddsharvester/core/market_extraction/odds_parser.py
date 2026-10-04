@@ -1,10 +1,9 @@
-from datetime import UTC, datetime
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from bs4 import BeautifulSoup, Tag
-
 from oddsharvester.core.odds_portal_selectors import OddsPortalSelectors
 
 _FRACTIONAL_RE = re.compile(r"^(\d+)/(\d+)$")
@@ -69,14 +68,29 @@ class OddsParser:
 
                 odds_blocks = block.find_all("div", class_=re.compile(OddsPortalSelectors.ODDS_BLOCK_CLASS_PATTERN))
 
-                if len(odds_blocks) < len(odds_labels):
-                    self.logger.warning(f"Incomplete odds data for bookmaker: {bookmaker_name}. Skipping...")
+                if not odds_blocks:
+                    self.logger.warning(
+                        f"No odds values for bookmaker: {bookmaker_name}. Skipping..."
+                    )
                     continue
 
-                extracted_odds = {label: odds_blocks[i].get_text(strip=True) for i, label in enumerate(odds_labels)}
+                if len(odds_blocks) < len(odds_labels):
+                    self.logger.warning(
+                        f"Incomplete odds data for bookmaker: {bookmaker_name}. "
+                        f"Got {len(odds_blocks)}/{len(odds_labels)} values — using partial data."
+                    )
+
+                # Collect all available values; fill missing labels with None rather than skipping the row
+                extracted_odds = {}
+                for i, label in enumerate(odds_labels):
+                    if i < len(odds_blocks):
+                        extracted_odds[label] = odds_blocks[i].get_text(strip=True)
+                    else:
+                        extracted_odds[label] = None
 
                 for key, value in extracted_odds.items():
-                    extracted_odds[key] = re.sub(r"(\d+\.\d+)\1", r"\1", value)
+                    if value is not None:
+                        extracted_odds[key] = re.sub(r"(\d+\.\d+)\1", r"\1", value)
 
                 extracted_odds["bookmaker_name"] = bookmaker_name
                 extracted_odds["period"] = period

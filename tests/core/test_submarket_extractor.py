@@ -1,9 +1,13 @@
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 from bs4 import BeautifulSoup
 import pytest
 
 from oddsharvester.core.market_extraction.submarket_extractor import SubmarketExtractor
+from oddsharvester.core.odds_portal_selectors import OddsPortalSelectors
+
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
 # =============================================================================
 # HTML FIXTURES — realistic HTML mimicking OddsPortal structure
@@ -591,3 +595,61 @@ class TestExtractVisibleSubmarketsPassiveHTML:
         )
 
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_extract_public_asian_handicap_line_rows(self, extractor, page_mock):
+        """Current public pages list every handicap line as a collapsed table row with average odds."""
+        html = (FIXTURES_DIR / "nfl_public_asian_handicap_rows_20261101.html").read_text()
+        page_mock.content = AsyncMock(return_value=html)
+
+        result = await extractor.extract_visible_submarkets_passive(page_mock, "Asian Handicap", "FullTime", ["1", "2"])
+
+        assert [row["submarket_name"] for row in result] == [
+            "Asian Handicap -3.5",
+            "Asian Handicap -3",
+            "Asian Handicap -2.5",
+        ]
+        assert result[0] == {
+            "submarket_name": "Asian Handicap -3.5",
+            "bookmaker_name": "OddsPortal average",
+            "bookmakers_count": 2,
+            "payout": "94.8%",
+            "1": "2.02",
+            "2": "1.82",
+            "period": "FullTime",
+            "market_type": "Asian Handicap",
+            "extraction_mode": "passive",
+        }
+
+    @pytest.mark.asyncio
+    async def test_extract_public_over_under_line_rows(self, extractor, page_mock):
+        """Over/Under rows keep the over/under labels and the bookmaker count."""
+        html = (FIXTURES_DIR / "nfl_public_over_under_rows_20261101.html").read_text()
+        page_mock.content = AsyncMock(return_value=html)
+
+        result = await extractor.extract_visible_submarkets_passive(
+            page_mock, "Over/Under", "FullTime", ["odds_over", "odds_under"]
+        )
+
+        assert len(result) == 4
+        assert result[-1]["submarket_name"] == "Over/Under +46.5"
+        assert result[-1]["odds_over"] == "1.91"
+        assert result[-1]["odds_under"] == "1.91"
+        assert result[-1]["bookmakers_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_public_line_rows_wait_for_rows_instead_of_fixed_pause(self, extractor, page_mock):
+        """When the selected tab's line rows render, extraction proceeds without the fixed scroll pause."""
+        html = (FIXTURES_DIR / "nfl_public_asian_handicap_rows_20261101.html").read_text()
+        page_mock.content = AsyncMock(return_value=html)
+        page_mock.wait_for_function = AsyncMock()
+
+        result = await extractor.extract_visible_submarkets_passive(page_mock, "Asian Handicap", "FullTime", ["1", "2"])
+
+        assert len(result) == 3
+        page_mock.wait_for_function.assert_awaited_once()
+        assert page_mock.wait_for_function.await_args.kwargs["arg"] == [
+            OddsPortalSelectors.PUBLIC_SUBMARKET_CSS,
+            "asian handicap",
+        ]
+        page_mock.wait_for_timeout.assert_not_called()

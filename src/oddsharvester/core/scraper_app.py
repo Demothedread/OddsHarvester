@@ -43,6 +43,7 @@ async def run_scraper(
     bookies_filter: str = BookiesFilter.ALL.value,
     period: str | None = None,
     request_delay: float = DEFAULT_REQUEST_DELAY_S,
+    days_ahead: int | None = None,
 ) -> ScrapeResult | None:
     """
     Runs the scraping process and handles execution.
@@ -170,6 +171,7 @@ async def run_scraper(
                         bookies_filter=bookies_filter_enum,
                         period=period_enum,
                         request_delay=request_delay,
+                        days_ahead=days_ahead,
                     )
                 else:
                     return await _scrape_multiple_leagues(
@@ -184,6 +186,7 @@ async def run_scraper(
                         bookies_filter=bookies_filter_enum,
                         period=period_enum,
                         request_delay=request_delay,
+                        days_ahead=days_ahead,
                     )
             else:
                 logger.info(f"""
@@ -202,6 +205,7 @@ async def run_scraper(
                     bookies_filter=bookies_filter_enum,
                     period=period_enum,
                     request_delay=request_delay,
+                    days_ahead=days_ahead,
                 )
 
         else:

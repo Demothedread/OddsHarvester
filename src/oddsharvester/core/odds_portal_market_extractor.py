@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any
 
 from playwright.async_api import Page
@@ -109,6 +110,12 @@ class OddsPortalMarketExtractor:
                     if first_market in market_methods:
                         main_market_info = self.market_grouping.get_main_market_info(market_methods[first_market])
                         odds_labels = main_market_info["odds_labels"] if main_market_info else None
+                        has_line_submarkets = any(
+                            (self.market_grouping.get_main_market_info(market_methods[market]) or {}).get(
+                                "specific_market"
+                            )
+                            for market in grouped_markets
+                        )
 
                         # Scrape the main market once
                         main_market_data = await self.extract_market_odds(
@@ -119,13 +126,13 @@ class OddsPortalMarketExtractor:
                             odds_labels=odds_labels,
                             scrape_odds_history=scrape_odds_history,
                             target_bookmaker=target_bookmaker,
-                            preview_submarkets_only=preview_submarkets_only,
+                            preview_submarkets_only=has_line_submarkets,
                             sport=sport,
                         )
 
-                        # Distribute the results to each specific market
-                        for specific_market in grouped_markets:
-                            market_data[f"{specific_market}_market"] = main_market_data
+                        market_data.update(
+                            self._distribute_grouped_rows(main_market_data, grouped_markets, market_methods)
+                        )
 
                 except Exception as e:
                     self.logger.error(f"Error scraping grouped markets for {main_market_name}: {e}")
@@ -133,6 +140,31 @@ class OddsPortalMarketExtractor:
                         market_data[f"{specific_market}_market"] = None
 
         return market_data
+
+    def _distribute_grouped_rows(
+        self, rows: list[dict[str, Any]] | None, grouped_markets: list[str], market_methods: dict
+    ) -> dict[str, Any]:
+        """Assign each grouped line only its own row when row names match the requested lines."""
+
+        def normalize(name: Any) -> str:
+            normalized = " ".join(str(name or "").lower().split())
+            return re.sub(r"([+-]?\d+)\.0(?=\s|$)", r"\1", normalized)
+
+        specific_names = {}
+        for market in grouped_markets:
+            info = self.market_grouping.get_main_market_info(market_methods[market]) or {}
+            specific_names[market] = normalize(info.get("specific_market"))
+
+        named_rows = [row for row in rows or [] if isinstance(row, dict) and row.get("submarket_name")]
+        if not any(specific_names.values()) or not named_rows:
+            return {f"{market}_market": rows for market in grouped_markets}
+
+        return {
+            f"{market}_market": [
+                row for row in named_rows if normalize(row.get("submarket_name")) == specific_names[market]
+            ]
+            for market in grouped_markets
+        }
 
     async def extract_market_odds(
         self,

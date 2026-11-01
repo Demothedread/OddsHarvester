@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -95,3 +96,74 @@ async def test_prepare_dismisses_cookie_before_format():
     scraper.set_odds_format = set_format
     await scraper._prepare_page_for_scraping(MagicMock())
     assert calls == ["cookie", "format"]
+
+
+DATED_FIXTURE = Path(__file__).parents[1] / "fixtures" / "nfl_public_listing_dated_20261101.html"
+FIRST_TODAY_PREGAME = (
+    ODDSPORTAL_BASE_URL + "/american-football/h2h/los-angeles-chargers-K0iU7PXK/los-angeles-rams-z7hZioyR/#OMSpgoWA"
+)
+LAST_IN_216H_WINDOW = (
+    ODDSPORTAL_BASE_URL + "/american-football/h2h/buffalo-bills-t2lcn4tk/minnesota-vikings-IsfjpsbD/#AZfrTiDs"
+)
+
+
+def test_full_season_listing_keeps_dom_order_and_skips_inplay_links():
+    links = BaseScraper.parse_match_links(DATED_FIXTURE.read_text())
+    assert len(links) == 156
+    assert links[0] == FIRST_TODAY_PREGAME
+    assert not [link for link in links if "/inplay-odds/" in link]
+
+
+def test_days_ahead_bounds_full_season_listing_to_header_dates():
+    html = DATED_FIXTURE.read_text()
+    links = BaseScraper.parse_match_links(html, reference_date=date(2026, 11, 1), days_ahead=9)
+    assert len(links) == 20
+    assert links[0] == FIRST_TODAY_PREGAME
+    assert links[-1] == LAST_IN_216H_WINDOW
+    assert len(BaseScraper.parse_match_links(html, reference_date=date(2026, 11, 1), days_ahead=1)) == 4
+    # "Today, 01 Nov" keeps its explicit date even when the clock has crossed midnight.
+    assert BaseScraper.parse_match_links(html, reference_date=date(2026, 11, 2), days_ahead=1) == [
+        ODDSPORTAL_BASE_URL + "/american-football/h2h/chicago-bears-2clovUM8/seattle-seahawks-f5h1oOee/#GdqKfb7F"
+    ]
+
+
+def test_days_ahead_excludes_undated_links_and_resolves_year_boundary():
+    """Mutations exercise boundaries; they are not production data."""
+    link = '<a class="group" href="/american-football/h2h/a-AAAAAAAA/b-BBBBBBBB/#{}">x</a>'
+    html = (
+        link.format("UNDATED1")
+        + "<div>Yesterday, 31 Dec</div>"
+        + link.format("PASTGAME")
+        + "<div>Today, 01 Jan</div>"
+        + link.format("NEWYEAR1")
+    )
+    assert BaseScraper.parse_match_links(html, reference_date=date(2027, 1, 1), days_ahead=2) == [
+        ODDSPORTAL_BASE_URL + "/american-football/h2h/a-AAAAAAAA/b-BBBBBBBB/#NEWYEAR1"
+    ]
+    assert len(BaseScraper.parse_match_links(html)) == 3
+
+
+def test_days_ahead_keeps_event_row_links_under_listing_date_headers():
+    html = (
+        "<div>Today, 01 Nov</div>"
+        '<div class="eventRow">'
+        '<a href="/american-football/h2h/team-a-AAAAAAAA/team-b-BBBBBBBB/#EVENTROW1">game</a>'
+        "</div>"
+    )
+
+    assert BaseScraper.parse_match_links(
+        html,
+        reference_date=date(2026, 11, 1),
+        days_ahead=1,
+    ) == [ODDSPORTAL_BASE_URL + "/american-football/h2h/team-a-AAAAAAAA/team-b-BBBBBBBB/#EVENTROW1"]
+
+
+@pytest.mark.asyncio
+async def test_extract_match_links_uses_page_date_for_window():
+    scraper = BaseScraper(MagicMock(), MagicMock(), MagicMock())
+    page = AsyncMock()
+    page.content.return_value = DATED_FIXTURE.read_text()
+    page.evaluate.return_value = [2026, 11, 1]
+    links = await scraper.extract_match_links(page, days_ahead=9)
+    assert len(links) == 20
+    page.evaluate.assert_awaited_once()

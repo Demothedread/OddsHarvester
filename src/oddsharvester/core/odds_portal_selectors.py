@@ -25,6 +25,9 @@ class OddsPortalSelectors:
     PUBLIC_ACTIVE_MARKET_CSS = "li.tab-item.active-item-feed > button"
     PUBLIC_MARKET_TAB_CSS = "li.tab-item > button"
     PUBLIC_SUBMARKET_CSS = "table tr.cursor-pointer > td span[class~='max-sm:hidden']"
+    PUBLIC_SUBMARKET_ROW_CSS = "table tr.cursor-pointer"
+    PUBLIC_SUBMARKET_NAME_CSS = "td span[class~='max-sm:hidden']"
+    PUBLIC_SUBMARKET_COUNT_CSS = "td span.ml-auto"
     PUBLIC_BOOKMAKER_ROW_CSS = "table tr:has(> td a[href^='/proxy/bookmakers/'][href$='/link/'])"
     PUBLIC_BOOKMAKER_NAME_CSS = "a[href^='/proxy/bookmakers/'][href$='/link/'] p"
     PUBLIC_ODDS_CELL_CSS = "td[class*='event-table-odd-col']"
@@ -99,6 +102,11 @@ class OddsPortalSelectors:
     PUBLIC_MATCH_LINK_CSS = "a.group[href*='/h2h/'][href*='/#']"
     PUBLIC_MATCH_HREF_PATTERN = r"^/[a-z-]+/h2h/[^/?#]+-[A-Za-z0-9]{8}/[^/?#]+-[A-Za-z0-9]{8}/#[A-Za-z0-9]{8}$"
     EVENT_LISTING_CONTENT_CSS = f"div[class*='eventRow'], {PUBLIC_MATCH_LINK_CSS}"
+    # Public league listings group fixtures under "Today, 01 Nov" or "05 Nov 2026" headers.
+    LISTING_DATE_HEADER_PATTERN = (
+        r"^(?:(?:Yesterday|Today|Tomorrow), (?P<day_month>\d{2} [A-Z][a-z]{2})"
+        r"|(?P<absolute>\d{2} [A-Z][a-z]{2} \d{4}))$"
+    )
 
     # Submarket name — BeautifulSoup class
     SUBMARKET_CLEAN_NAME_CLASS = "max-sm:!hidden"

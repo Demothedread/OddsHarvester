@@ -4,7 +4,12 @@ from playwright.async_api import Page
 
 from oddsharvester.core.browser_helper import BrowserHelper
 from oddsharvester.core.odds_portal_selectors import OddsPortalSelectors
-from oddsharvester.utils.constants import DEFAULT_MARKET_TIMEOUT_MS, MARKET_SWITCH_WAIT_TIME_MS, SCROLL_PAUSE_TIME_MS
+from oddsharvester.utils.constants import (
+    DEFAULT_MARKET_TIMEOUT_MS,
+    MARKET_SWITCH_POLL_MS,
+    MARKET_SWITCH_WAIT_TIME_MS,
+    SCROLL_PAUSE_TIME_MS,
+)
 
 
 class NavigationManager:
@@ -35,17 +40,17 @@ class NavigationManager:
         """
         self.logger.info(f"Waiting for market switch to complete for: {market_name}")
 
+        try:
+            if await self._wait_for_public_tab_bar(page, MARKET_SWITCH_WAIT_TIME_MS):
+                return await self._poll_public_active_tab(page, market_name, MARKET_SWITCH_WAIT_TIME_MS * max_attempts)
+        except Exception as e:
+            self.logger.warning(f"Public market switch verification failed: {e}")
+            return False
+
         for attempt in range(max_attempts):
             try:
                 # Wait for the market switch animation to complete
                 await page.wait_for_timeout(MARKET_SWITCH_WAIT_TIME_MS)
-
-                public_tabs = await page.query_selector_all(OddsPortalSelectors.PUBLIC_MARKET_TAB_CSS)
-                if public_tabs:
-                    active_tab = await page.query_selector(OddsPortalSelectors.PUBLIC_ACTIVE_MARKET_CSS)
-                    if active_tab and (await active_tab.text_content()).strip().casefold() == market_name.casefold():
-                        return True
-                    continue
 
                 # Check if the market tab is active
                 active_tab = await page.query_selector("li.active, li[class*='active'], .active")
@@ -60,6 +65,30 @@ class NavigationManager:
 
         self.logger.warning(f"Market switch verification failed after {max_attempts} attempts")
         return False
+
+    async def _wait_for_public_tab_bar(self, page: Page, budget_ms: int) -> bool:
+        """Public pages remove the tab bar for a moment after each click; wait for it to re-render."""
+        waited_ms = 0
+        while not await page.query_selector_all(OddsPortalSelectors.PUBLIC_MARKET_TAB_CSS):
+            if waited_ms >= budget_ms:
+                return False
+            await page.wait_for_timeout(MARKET_SWITCH_POLL_MS)
+            waited_ms += MARKET_SWITCH_POLL_MS
+        return True
+
+    async def _poll_public_active_tab(self, page: Page, market_name: str, budget_ms: int) -> bool:
+        """Poll the public tab bar until the requested tab is selected or the switch budget is spent."""
+        waited_ms = 0
+        while True:
+            active_tab = await page.query_selector(OddsPortalSelectors.PUBLIC_ACTIVE_MARKET_CSS)
+            active_text = (await active_tab.text_content()) if active_tab else ""
+            if (active_text or "").strip().casefold() == market_name.casefold():
+                return True
+            if waited_ms >= budget_ms:
+                self.logger.warning(f"Market switch verification failed after {budget_ms}ms")
+                return False
+            await page.wait_for_timeout(MARKET_SWITCH_POLL_MS)
+            waited_ms += MARKET_SWITCH_POLL_MS
 
     async def select_specific_market(self, page: Page, specific_market: str) -> bool:
         """Select a specific submarket within the main market."""

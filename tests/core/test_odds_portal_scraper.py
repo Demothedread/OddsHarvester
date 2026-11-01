@@ -213,7 +213,7 @@ async def test_scrape_upcoming(url_builder_mock, setup_scraper_mocks):
     )
     page_mock.goto.assert_called_once()
     scraper._prepare_page_for_scraping.assert_called_once_with(page=page_mock)
-    scraper.extract_match_links.assert_called_once_with(page=page_mock)
+    scraper.extract_match_links.assert_called_once_with(page=page_mock, days_ahead=None)
     scraper.extract_match_odds.assert_called_once_with(
         sport="football",
         match_links=["https://oddsportal.com/match1", "https://oddsportal.com/match2"],

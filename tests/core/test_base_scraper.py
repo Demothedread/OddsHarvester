@@ -116,50 +116,24 @@ async def test_set_odds_format_timeout(setup_base_scraper_mocks):
 
 
 @pytest.mark.asyncio
-@patch("oddsharvester.core.base_scraper.BeautifulSoup")
-@patch("oddsharvester.core.base_scraper.re")
-async def test_extract_match_links(re_mock, bs4_mock, setup_base_scraper_mocks):
-    """Test extracting match links from a page."""
+async def test_extract_match_links(setup_base_scraper_mocks):
+    """Legacy eventRow links keep listing order; shallow links are filtered out."""
     mocks = setup_base_scraper_mocks
     scraper = mocks["scraper"]
     page_mock = mocks["page_mock"]
+    page_mock.content.return_value = (
+        '<div class="eventRow">'
+        '<a href="/football/england/premier-league/liverpool-man-utd/efgh5678">b</a><a href="/">home</a></div>'
+        '<div class="eventRow"><a href="/football/england/premier-league/arsenal-chelsea/abcd1234">a</a></div>'
+    )
 
-    # Mock BeautifulSoup and its methods
-    soup_mock = MagicMock()
-    bs4_mock.return_value = soup_mock
-
-    # Mock regex compile
-    pattern_mock = MagicMock()
-    re_mock.compile.return_value = pattern_mock
-
-    # Mock finding event rows and links
-    event_row1 = MagicMock()
-    event_row2 = MagicMock()
-
-    link1 = {"href": "/football/england/premier-league/arsenal-chelsea/abcd1234"}
-    link2 = {"href": "/football/england/premier-league/liverpool-man-utd/efgh5678"}
-    link3 = {"href": "/"}  # Should be filtered out
-
-    event_row1.find_all.return_value = [link1, link3]
-    event_row2.find_all.return_value = [link2]
-
-    soup_mock.find_all.return_value = [event_row1, event_row2]
-
-    # Call the method under test
     result = await scraper.extract_match_links(page=page_mock)
 
-    # Verify interactions
     page_mock.content.assert_called_once()
-    bs4_mock.assert_called_once()
-    re_mock.compile.assert_called_once_with("^eventRow")
-    soup_mock.find_all.assert_called_once_with(class_=pattern_mock)
-
-    # Verify results
-    expected_links = [
-        f"{ODDSPORTAL_BASE_URL}/football/england/premier-league/arsenal-chelsea/abcd1234",
+    assert result == [
         f"{ODDSPORTAL_BASE_URL}/football/england/premier-league/liverpool-man-utd/efgh5678",
+        f"{ODDSPORTAL_BASE_URL}/football/england/premier-league/arsenal-chelsea/abcd1234",
     ]
-    assert sorted(result) == sorted(expected_links)
 
 
 @pytest.mark.asyncio

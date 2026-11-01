@@ -92,11 +92,17 @@ class SubmarketExtractor:
         self.logger.info(f"Extracting visible submarkets for {main_market} in passive mode")
 
         try:
-            await page.wait_for_timeout(SCROLL_PAUSE_TIME_MS)
+            if not await self._wait_for_public_line_rows(page, main_market):
+                await page.wait_for_timeout(SCROLL_PAUSE_TIME_MS)
             html_content = await page.content()
             if not isinstance(html_content, str):
                 html_content = ""
             soup = BeautifulSoup(html_content, "html.parser")
+
+            public_rows = self._extract_public_line_rows(soup, main_market, period, odds_labels)
+            if public_rows:
+                self.logger.info(f"Extracted {len(public_rows)} public line rows for {main_market} in passive mode")
+                return public_rows
 
             # Find all submarket rows (these contain the handicap names and odds)
             submarket_rows = soup.find_all("div", class_=re.compile(OddsPortalSelectors.BOOKMAKER_ROW_CLASS))
@@ -177,6 +183,54 @@ class SubmarketExtractor:
         except Exception as e:
             self.logger.error(f"Error in passive submarket extraction: {e}")
             return []
+
+    async def _wait_for_public_line_rows(self, page: Page, main_market: str) -> bool:
+        """Wait, within the scroll pause budget, for the selected tab's line rows to render."""
+        try:
+            await page.wait_for_function(
+                """([selector, prefix]) => [...document.querySelectorAll(selector)]
+                    .some((element) => element.textContent.trim().toLowerCase().startsWith(prefix))""",
+                arg=[OddsPortalSelectors.PUBLIC_SUBMARKET_CSS, main_market.casefold()],
+                timeout=SCROLL_PAUSE_TIME_MS,
+            )
+            return True
+        except Exception:
+            self.logger.debug(f"No public line rows rendered for {main_market}")
+            return False
+
+    def _extract_public_line_rows(
+        self, soup: BeautifulSoup, main_market: str, period: str, odds_labels: list | None
+    ) -> list[dict[str, Any]]:
+        """Read collapsed line rows, which show average odds across the counted bookmakers."""
+        labels = odds_labels or ["odds_over", "odds_under"]
+        prefix = main_market.lower()
+        rows = []
+
+        for row in soup.select(OddsPortalSelectors.PUBLIC_SUBMARKET_ROW_CSS):
+            name_element = row.select_one(OddsPortalSelectors.PUBLIC_SUBMARKET_NAME_CSS)
+            submarket_name = name_element.get_text(strip=True) if name_element else ""
+            if not submarket_name.lower().startswith(prefix):
+                continue
+
+            odds_values = [p.get_text(strip=True) for p in row.select("td p")]
+            odds_values = [value for value in odds_values if value]
+            if len(odds_values) < len(labels):
+                continue
+
+            count_element = row.select_one(OddsPortalSelectors.PUBLIC_SUBMARKET_COUNT_CSS)
+            count_text = count_element.get_text(strip=True) if count_element else ""
+            payout_element = row.select("td")[-1].find("span")
+            entry: dict[str, Any] = {
+                "submarket_name": submarket_name,
+                "bookmaker_name": "OddsPortal average",
+                "bookmakers_count": int(count_text) if count_text.isdigit() else None,
+                "payout": payout_element.get_text(strip=True) if payout_element else None,
+            }
+            entry.update(zip(labels, odds_values, strict=False))
+            entry.update({"period": period, "market_type": main_market, "extraction_mode": "passive"})
+            rows.append(entry)
+
+        return rows
 
     def _extract_submarket_name(self, row, main_market: str) -> str | None:
         """Extract submarket name from a row using multiple strategies."""

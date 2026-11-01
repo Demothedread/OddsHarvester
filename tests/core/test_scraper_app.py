@@ -152,6 +152,7 @@ async def test_run_scraper_upcoming(
         bookies_filter=ANY,
         period=ANY,
         request_delay=ANY,
+        days_ahead=None,
     )
 
     assert result == {"result": "upcoming_data"}

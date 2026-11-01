@@ -4,7 +4,12 @@ import pytest
 
 from oddsharvester.core.browser_helper import BrowserHelper
 from oddsharvester.core.market_extraction.navigation_manager import NavigationManager
-from oddsharvester.utils.constants import DEFAULT_MARKET_TIMEOUT_MS, MARKET_SWITCH_WAIT_TIME_MS, SCROLL_PAUSE_TIME_MS
+from oddsharvester.utils.constants import (
+    DEFAULT_MARKET_TIMEOUT_MS,
+    MARKET_SWITCH_POLL_MS,
+    MARKET_SWITCH_WAIT_TIME_MS,
+    SCROLL_PAUSE_TIME_MS,
+)
 
 
 class TestNavigationManager:
@@ -72,6 +77,37 @@ class TestNavigationManager:
         # Assert
         assert result is True
         page_mock.wait_for_timeout.assert_called_with(MARKET_SWITCH_WAIT_TIME_MS)
+
+    @pytest.mark.asyncio
+    async def test_wait_for_market_switch_polls_until_public_tab_is_active(self, navigation_manager, page_mock):
+        """Public tabs are polled briefly instead of sleeping a fixed switch delay first."""
+        loading_tab = AsyncMock()
+        loading_tab.text_content = AsyncMock(return_value="Home/Away")
+        active_tab = AsyncMock()
+        active_tab.text_content = AsyncMock(return_value="Over/Under")
+        page_mock.query_selector_all = AsyncMock(return_value=[MagicMock()])
+        page_mock.query_selector = AsyncMock(side_effect=[loading_tab, active_tab])
+
+        result = await navigation_manager.wait_for_market_switch(page_mock, "Over/Under")
+
+        assert result is True
+        page_mock.wait_for_timeout.assert_called_once_with(MARKET_SWITCH_POLL_MS)
+
+    @pytest.mark.asyncio
+    async def test_wait_for_market_switch_waits_for_rerendered_public_tab_bar(self, navigation_manager, page_mock):
+        """OddsPortal removes the tab bar briefly after a click; polling resumes once it re-renders."""
+        active_tab = AsyncMock()
+        active_tab.text_content = AsyncMock(return_value="Asian Handicap")
+        page_mock.query_selector_all = AsyncMock(side_effect=[[], [], [MagicMock()]])
+        page_mock.query_selector = AsyncMock(return_value=active_tab)
+
+        result = await navigation_manager.wait_for_market_switch(page_mock, "Asian Handicap")
+
+        assert result is True
+        assert [call.args for call in page_mock.wait_for_timeout.await_args_list] == [
+            (MARKET_SWITCH_POLL_MS,),
+            (MARKET_SWITCH_POLL_MS,),
+        ]
 
     @pytest.mark.asyncio
     async def test_wait_for_market_switch_wrong_market(self, navigation_manager, page_mock):

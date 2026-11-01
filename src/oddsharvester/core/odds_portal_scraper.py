@@ -145,6 +145,7 @@ class OddsPortalScraper(BaseScraper):
         bookies_filter: BookiesFilter = BookiesFilter.ALL,
         period: Enum | None = None,
         request_delay: float = DEFAULT_REQUEST_DELAY_S,
+        days_ahead: int | None = None,
     ) -> ScrapeResult:
         """
         Scrapes upcoming match odds.
@@ -156,6 +157,7 @@ class OddsPortalScraper(BaseScraper):
             markets (Optional[List[str]]): List of markets.
             scrape_odds_history (bool): Whether to scrape and attach odds history.
             target_bookmaker (str): If set, only scrape odds for this bookmaker.
+            days_ahead (Optional[int]): If set, only scrape fixtures listed within this many dates from today.
 
         Returns:
             ScrapeResult: Contains successful results, failed URLs, and statistics.
@@ -180,7 +182,7 @@ class OddsPortalScraper(BaseScraper):
             content_check_selector=OddsPortalSelectors.EVENT_LISTING_CONTENT_CSS,
         )
 
-        match_links = await self.extract_match_links(page=current_page)
+        match_links = await self.extract_match_links(page=current_page, days_ahead=days_ahead)
 
         if not match_links:
             self.logger.warning("No match links found for upcoming matches.")

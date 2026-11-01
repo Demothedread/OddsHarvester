@@ -6,6 +6,7 @@ from click.testing import CliRunner
 import pytest
 
 from oddsharvester.cli.cli import cli
+from oddsharvester.core.scrape_result import ScrapeResult, ScrapeStats
 
 # Use a far future date to avoid date validation issues
 FUTURE_DATE = "20991231"
@@ -96,6 +97,31 @@ class TestUpcomingCommand:
         result = runner.invoke(cli, ["upcoming", "-s", "football", "-d", "20200101"])
         assert result.exit_code != 0
         assert "must be today or in the future" in result.output
+
+    def test_upcoming_days_ahead_is_forwarded(self, runner, mock_run_scraper, tmp_path):
+        mock_run_scraper["upcoming"].return_value = ScrapeResult(
+            success=[{"match": "data"}], stats=ScrapeStats(total_urls=1, successful=1)
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "upcoming",
+                "-s",
+                "american-football",
+                "--league",
+                "nfl",
+                "--days-ahead",
+                "10",
+                "-o",
+                str(tmp_path / "out.json"),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert mock_run_scraper["upcoming"].call_args.kwargs["days_ahead"] == 10
+
+    def test_upcoming_days_ahead_must_be_positive(self, runner):
+        result = runner.invoke(cli, ["upcoming", "-s", "american-football", "--league", "nfl", "--days-ahead", "0"])
+        assert result.exit_code != 0
 
 
 class TestHistoricCommand:

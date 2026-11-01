@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 import json
 import logging
@@ -106,20 +106,30 @@ class BaseScraper:
         except Exception as e:
             self.logger.error(f"Error while setting odds format: {e}", exc_info=True)
 
-    async def extract_match_links(self, page: Page) -> list[str]:
+    async def extract_match_links(self, page: Page, days_ahead: int | None = None) -> list[str]:
         """
         Extract and parse match links from the current page.
 
         Args:
             page (Page): A Playwright Page instance for this task.
+            days_ahead (int | None): When set, keep only fixtures listed under date headers
+                from the page's current date through the following ``days_ahead - 1`` dates.
 
         Returns:
-            List[str]: A list of unique match links found on the page.
+            List[str]: Unique match links in listing (chronological) order.
         """
         try:
             html_content = await page.content()
-            match_links = self.parse_match_links(html_content)
-            self.logger.info(f"Extracted {len(match_links)} unique match links.")
+            reference_date = None
+            if days_ahead is not None:
+                # Listing headers use the browser timezone, so "today" must come from the page.
+                year, month, day = await page.evaluate(
+                    "() => { const d = new Date(); return [d.getFullYear(), d.getMonth() + 1, d.getDate()]; }"
+                )
+                reference_date = date(year, month, day)
+            match_links = self.parse_match_links(html_content, reference_date=reference_date, days_ahead=days_ahead)
+            window = f" within {days_ahead} day(s) from {reference_date}" if days_ahead is not None else ""
+            self.logger.info(f"Extracted {len(match_links)} unique match links{window}.")
             return match_links
 
         except Exception as e:
@@ -127,22 +137,70 @@ class BaseScraper:
             return []
 
     @staticmethod
-    def parse_match_links(html_content: str) -> list[str]:
-        """Parse legacy rows and public H2H fixture links without losing event IDs."""
+    def parse_match_links(
+        html_content: str,
+        reference_date: date | None = None,
+        days_ahead: int | None = None,
+    ) -> list[str]:
+        """Parse legacy rows and public H2H fixture links without losing event IDs or listing order.
+
+        Public league listings contain the whole remaining season, so ``days_ahead`` bounds
+        the result to fixtures under date headers in ``[reference_date, reference_date + days_ahead)``.
+        Undated links are excluded when a window is requested.
+        """
         soup = BeautifulSoup(html_content, "lxml")
-        event_rows = soup.find_all(class_=re.compile(OddsPortalSelectors.EVENT_ROW_CLASS_PATTERN))
-        match_links = {
-            f"{ODDSPORTAL_BASE_URL}{link['href']}"
-            for row in event_rows
-            for link in row.find_all("a", href=True)
-            if len(link["href"].strip("/").split("/")) > 3
-        }
-        match_links.update(
-            f"{ODDSPORTAL_BASE_URL}{link['href']}"
-            for link in soup.select(OddsPortalSelectors.PUBLIC_MATCH_LINK_CSS)
-            if re.fullmatch(OddsPortalSelectors.PUBLIC_MATCH_HREF_PATTERN, link["href"])
-        )
-        return sorted(match_links)
+        entries: dict[str, date | None] = {}
+        legacy_match_hrefs = set()
+
+        for row in soup.find_all(class_=re.compile(OddsPortalSelectors.EVENT_ROW_CLASS_PATTERN)):
+            for link in row.find_all("a", href=True):
+                href = link["href"]
+                if len(href.strip("/").split("/")) > 3:
+                    legacy_match_hrefs.add(href)
+
+        if days_ahead is not None and reference_date is None:
+            reference_date = datetime.now().date()
+        header_pattern = re.compile(OddsPortalSelectors.LISTING_DATE_HEADER_PATTERN)
+        public_links = set(soup.select(OddsPortalSelectors.PUBLIC_MATCH_LINK_CSS))
+        current_date: date | None = None
+        for element in soup.find_all(True):
+            if element.name == "a":
+                href = element.get("href")
+                is_public_match = (
+                    href
+                    and element in public_links
+                    and re.fullmatch(
+                        OddsPortalSelectors.PUBLIC_MATCH_HREF_PATTERN,
+                        href,
+                    )
+                )
+                if href and (href in legacy_match_hrefs or is_public_match):
+                    # First occurrence wins; trailing summary blocks repeat links under later headers.
+                    entries.setdefault(f"{ODDSPORTAL_BASE_URL}{href}", current_date)
+            elif element.string and (header := header_pattern.match(element.string.strip())):
+                current_date = BaseScraper._resolve_listing_date(header, reference_date)
+
+        if days_ahead is None:
+            return list(entries)
+
+        end_date = reference_date + timedelta(days=days_ahead)
+        return [link for link, listed in entries.items() if listed is not None and reference_date <= listed < end_date]
+
+    @staticmethod
+    def _resolve_listing_date(header: re.Match, reference_date: date | None) -> date | None:
+        if header.group("absolute"):
+            return datetime.strptime(header.group("absolute"), "%d %b %Y").date()
+        if reference_date is None:
+            return None
+        # "Today, 01 Nov" omits the year; choose the year that keeps it nearest the reference date.
+        day_month = datetime.strptime(f"{header.group('day_month')} 2000", "%d %b %Y")
+        candidates = []
+        for year in (reference_date.year - 1, reference_date.year, reference_date.year + 1):
+            try:
+                candidates.append(date(year, day_month.month, day_month.day))
+            except ValueError:
+                continue
+        return min(candidates, key=lambda candidate: abs(candidate - reference_date))
 
     async def extract_match_odds(
         self,

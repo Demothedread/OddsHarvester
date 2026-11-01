@@ -40,6 +40,17 @@ class TestMarketGrouping:
         assert result["main_market"] == "Over/Under"
         assert result["odds_labels"] == ["odds_over", "odds_under"]
 
+    def test_get_main_market_info_includes_specific_market(self, market_grouping):
+        """The specific line is exposed so grouped preview results can be split per line."""
+        main_market = "Over/Under"
+        specific_market = "Over/Under +46.5"
+        odds_labels = ["odds_over", "odds_under"]
+        func = lambda: (main_market, specific_market, odds_labels)  # noqa: E731
+
+        result = market_grouping.get_main_market_info(func)
+
+        assert result["specific_market"] == "Over/Under +46.5"
+
     def test_get_main_market_info_closure_without_main_market(self, market_grouping):
         """Test extraction from a closure that doesn't have main_market."""
         some_value = 42

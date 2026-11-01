@@ -28,16 +28,23 @@ class MarketGrouping:
 
                 # Find main_market and odds_labels in the closure
                 main_market = None
+                specific_market = None
                 odds_labels = None
 
                 for var_name, var_value in zip(closure_vars, closure_values, strict=False):
                     if var_name == "main_market":
                         main_market = var_value
+                    elif var_name == "specific_market":
+                        specific_market = var_value
                     elif var_name == "odds_labels":
                         odds_labels = var_value
 
                 if main_market:
-                    return {"main_market": main_market, "odds_labels": odds_labels}
+                    return {
+                        "main_market": main_market,
+                        "specific_market": specific_market,
+                        "odds_labels": odds_labels,
+                    }
         except Exception as e:
             self.logger.debug(f"Could not extract market info from method: {e}")
 

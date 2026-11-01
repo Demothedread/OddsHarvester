@@ -122,8 +122,8 @@ class TestOddsPortalMarketExtractor:
         assert len(result) == 0
 
     @pytest.mark.asyncio
-    async def test_parse_market_odds_missing_data(self, extractor):
-        """Test parsing odds when a bookmaker has incomplete data."""
+    async def test_parse_market_odds_preserves_partial_bookmaker_data(self, extractor):
+        """Keep valid prices while marking the missing selection unavailable."""
         # Arrange
         odds_labels = ["1", "X", "2", "Extras"]
 
@@ -131,7 +131,11 @@ class TestOddsPortalMarketExtractor:
         result = extractor.odds_parser.parse_market_odds(SAMPLE_HTML_ODDS, "FullTime", odds_labels)
 
         # Assert
-        assert len(result) == 0
+        assert len(result) == 2
+        assert result[0]["1"] == "1.90"
+        assert result[0]["X"] == "3.50"
+        assert result[0]["2"] == "4.20"
+        assert result[0]["Extras"] is None
 
     @pytest.mark.asyncio
     async def test_parse_market_odds_error_handling(self, extractor):
@@ -493,6 +497,114 @@ class TestOddsPortalMarketExtractor:
         assert "over_under_1_5_market" in result
         assert "over_under_2_5_market" in result
         mock_extract.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_scrape_markets_preview_mode_assigns_each_line_its_own_row(self, extractor, page_mock):
+        """One tab visit fills each specific line key with only its matching row."""
+
+        def _make_closure(main_market, specific_market, odds_labels):
+            return lambda self, page, period, hist, bk, preview, sport: (main_market, specific_market, odds_labels)
+
+        rows = [
+            {"submarket_name": "Asian Handicap -3.5", "1": "2.02", "2": "1.82"},
+            {"submarket_name": "Asian Handicap -2.5", "1": "1.81", "2": "2.10"},
+        ]
+
+        with (
+            patch.object(SportMarketRegistry, "get_market_mapping") as mock_mapping,
+            patch.object(extractor, "extract_market_odds", new_callable=AsyncMock, return_value=rows) as mock_extract,
+        ):
+            mock_mapping.return_value = {
+                "asian_handicap_-3_5": _make_closure("Asian Handicap", "Asian Handicap -3.5", ["1", "2"]),
+                "asian_handicap_-2_5": _make_closure("Asian Handicap", "Asian Handicap -2.5", ["1", "2"]),
+                "asian_handicap_-7_5": _make_closure("Asian Handicap", "Asian Handicap -7.5", ["1", "2"]),
+            }
+
+            result = await extractor.scrape_markets(
+                page=page_mock,
+                sport="american-football",
+                markets=["asian_handicap_-3_5", "asian_handicap_-2_5", "asian_handicap_-7_5"],
+                preview_submarkets_only=True,
+            )
+
+        mock_extract.assert_called_once()
+        assert result["asian_handicap_-3_5_market"] == [rows[0]]
+        assert result["asian_handicap_-2_5_market"] == [rows[1]]
+        assert result["asian_handicap_-7_5_market"] == []
+
+    def test_distribute_grouped_rows_does_not_broadcast_unmatched_named_lines(self, extractor):
+        def _make_closure(specific_market):
+            main_market = "Asian Handicap"
+            odds_labels = ["1", "2"]
+            return lambda self, page, period, hist, bk, preview, sport: (
+                main_market,
+                specific_market,
+                odds_labels,
+            )
+
+        rows = [{"submarket_name": "Asian Handicap -4.5", "1": "1.90", "2": "1.90"}]
+        market_methods = {
+            "asian_handicap_-14_5": _make_closure("Asian Handicap -14.5"),
+            "asian_handicap_-3_5": _make_closure("Asian Handicap -3.5"),
+        }
+
+        result = extractor._distribute_grouped_rows(
+            rows,
+            list(market_methods),
+            market_methods,
+        )
+
+        assert result == {
+            "asian_handicap_-14_5_market": [],
+            "asian_handicap_-3_5_market": [],
+        }
+
+    def test_distribute_grouped_rows_matches_integer_lines_without_decimal_suffix(self, extractor):
+        def _make_closure(specific_market):
+            main_market = "Asian Handicap"
+            odds_labels = ["1", "2"]
+
+            return lambda self, page, period, hist, bk, preview, sport: (
+                main_market,
+                specific_market,
+                odds_labels,
+            )
+
+        rows = [{"submarket_name": "Asian Handicap -3", "1": "1.90", "2": "1.90"}]
+        market_methods = {
+            "asian_handicap_-3_0": _make_closure("Asian Handicap -3.0"),
+            "asian_handicap_-4_0": _make_closure("Asian Handicap -4.0"),
+        }
+
+        result = extractor._distribute_grouped_rows(
+            rows,
+            list(market_methods),
+            market_methods,
+        )
+
+        assert result == {
+            "asian_handicap_-3_0_market": rows,
+            "asian_handicap_-4_0_market": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_scrape_markets_preview_mode_reads_single_markets_directly(self, extractor, page_mock):
+        """Markets without line submarkets skip the passive preview attempt."""
+
+        def _make_closure(main_market, specific_market, odds_labels):
+            return lambda self, page, period, hist, bk, preview, sport: (main_market, specific_market, odds_labels)
+
+        with (
+            patch.object(SportMarketRegistry, "get_market_mapping") as mock_mapping,
+            patch.object(extractor, "extract_market_odds", new_callable=AsyncMock, return_value=[]) as mock_extract,
+        ):
+            mock_mapping.return_value = {"home_away": _make_closure("Home/Away", None, ["1", "2"])}
+
+            await extractor.scrape_markets(
+                page=page_mock, sport="american-football", markets=["home_away"], preview_submarkets_only=True
+            )
+
+        assert mock_extract.await_args.kwargs["preview_submarkets_only"] is False
 
     @pytest.mark.asyncio
     async def test_scrape_markets_preview_mode_exception_sets_none(self, extractor, page_mock):

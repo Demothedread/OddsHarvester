@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
     callback=validate_date,
     help="Date for upcoming matches (format: YYYYMMDD).",
 )
+@click.option(
+    "--days-ahead",
+    type=click.IntRange(min=1),
+    default=None,
+    help="With --league, only scrape fixtures listed from today through the next N-1 dates (browser timezone).",
+)
 @click.pass_context
 def upcoming(ctx, **kwargs):
     """Scrape odds for upcoming matches."""
@@ -59,6 +65,7 @@ def upcoming(ctx, **kwargs):
                 bookies_filter=bookies_filter.value if bookies_filter else "all",
                 period=kwargs.get("period"),
                 request_delay=kwargs.get("request_delay", 1.0),
+                days_ahead=kwargs.get("days_ahead"),
             )
         )
 

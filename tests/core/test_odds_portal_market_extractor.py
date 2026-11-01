@@ -68,6 +68,7 @@ class TestOddsPortalMarketExtractor:
     def page_mock(self):
         """Create a mock for the Playwright page."""
         mock = AsyncMock()
+        mock.query_selector_all.return_value = []
         mock.content = AsyncMock(return_value=SAMPLE_HTML_ODDS)
         mock.wait_for_timeout = AsyncMock()
         return mock

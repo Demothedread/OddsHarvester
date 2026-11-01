@@ -6,6 +6,7 @@ import logging
 import random
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 from playwright.async_api import Page, TimeoutError
@@ -70,12 +71,12 @@ class BaseScraper:
         """
         try:
             self.logger.info(f"Setting odds format: {odds_format.value}")
-            button_selector = "div.group > button.gap-2"
+            button_selector = OddsPortalSelectors.ODDS_FORMAT_BUTTON_CSS
             await page.wait_for_selector(button_selector, state="attached", timeout=ODDS_FORMAT_SELECTOR_TIMEOUT_MS)
             dropdown_button = await page.query_selector(button_selector)
 
             # Check if the desired format is already selected
-            current_format = await dropdown_button.inner_text()
+            current_format = (await dropdown_button.inner_text()).strip()
             self.logger.info(f"Current odds format detected: {current_format}")
 
             if current_format == odds_format.value:
@@ -84,7 +85,7 @@ class BaseScraper:
 
             await dropdown_button.click()
             await page.wait_for_timeout(ODDS_FORMAT_WAIT_MS)
-            format_option_selector = "div.group > div.dropdown-content > ul > li > a"
+            format_option_selector = OddsPortalSelectors.ODDS_FORMAT_OPTIONS_CSS
             format_options = await page.query_selector_all(format_option_selector)
 
             for option in format_options:
@@ -117,23 +118,31 @@ class BaseScraper:
         """
         try:
             html_content = await page.content()
-            soup = BeautifulSoup(html_content, "lxml")
-            event_rows = soup.find_all(class_=re.compile(OddsPortalSelectors.EVENT_ROW_CLASS_PATTERN))
-            self.logger.info(f"Found {len(event_rows)} event rows.")
-
-            match_links = {
-                f"{ODDSPORTAL_BASE_URL}{link['href']}"
-                for row in event_rows
-                for link in row.find_all("a", href=True)
-                if len(link["href"].strip("/").split("/")) > 3
-            }
-
+            match_links = self.parse_match_links(html_content)
             self.logger.info(f"Extracted {len(match_links)} unique match links.")
-            return list(match_links)
+            return match_links
 
         except Exception as e:
             self.logger.error(f"Error extracting match links: {e}", exc_info=True)
             return []
+
+    @staticmethod
+    def parse_match_links(html_content: str) -> list[str]:
+        """Parse legacy rows and public H2H fixture links without losing event IDs."""
+        soup = BeautifulSoup(html_content, "lxml")
+        event_rows = soup.find_all(class_=re.compile(OddsPortalSelectors.EVENT_ROW_CLASS_PATTERN))
+        match_links = {
+            f"{ODDSPORTAL_BASE_URL}{link['href']}"
+            for row in event_rows
+            for link in row.find_all("a", href=True)
+            if len(link["href"].strip("/").split("/")) > 3
+        }
+        match_links.update(
+            f"{ODDSPORTAL_BASE_URL}{link['href']}"
+            for link in soup.select(OddsPortalSelectors.PUBLIC_MATCH_LINK_CSS)
+            if re.fullmatch(OddsPortalSelectors.PUBLIC_MATCH_HREF_PATTERN, link["href"])
+        )
+        return sorted(match_links)
 
     async def extract_match_odds(
         self,
@@ -380,7 +389,9 @@ class BaseScraper:
         try:
             # Wait for the react event header to be loaded
             try:
-                await page.wait_for_selector("#react-event-header", timeout=SELECTOR_TIMEOUT_MS)
+                await page.wait_for_selector(
+                    OddsPortalSelectors.EVENT_HEADER_CONTENT_CSS, state="attached", timeout=SELECTOR_TIMEOUT_MS
+                )
             except Exception:
                 # If we can't find the selector, try to get the content anyway
                 self.logger.warning("React event header selector not found, attempting to parse existing content")
@@ -390,8 +401,7 @@ class BaseScraper:
             event_header_div = soup.find("div", id="react-event-header")
 
             if not event_header_div:
-                self.logger.warning("React event header div not found in page content")
-                return None
+                return self._extract_public_event_metadata(soup, match_link)
 
             # Check if the div has the 'data' attribute
             data_attribute = event_header_div.get("data")
@@ -437,3 +447,43 @@ class BaseScraper:
         except Exception as e:
             self.logger.error(f"Error extracting match details while parsing React event header: {e}")
             return None
+
+    def _extract_public_event_metadata(self, soup: BeautifulSoup, match_link: str) -> dict[str, Any] | None:
+        """Use the source's public SportsEvent metadata, never infer identity from URL team order."""
+        for script in soup.select(OddsPortalSelectors.PUBLIC_EVENT_METADATA_CSS):
+            try:
+                event = json.loads(script.get_text())
+                if not isinstance(event, dict):
+                    continue
+                types = event.get("@type", [])
+                if isinstance(types, str):
+                    types = [types]
+                if "SportsEvent" not in types:
+                    continue
+                if urlsplit(event.get("url", "")).path != urlsplit(match_link).path:
+                    continue
+                home = event.get("homeTeam", {}).get("name")
+                away = event.get("awayTeam", {}).get("name")
+                start = datetime.fromisoformat(event["startDate"])
+                if not home or not away or start.tzinfo is None:
+                    continue
+                location = event.get("location", {})
+                address = location.get("address", {})
+                return {
+                    "scraped_date": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    "match_date": start.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    "match_link": match_link,
+                    "home_team": home,
+                    "away_team": away,
+                    "league_name": event.get("organizer", {}).get("name"),
+                    "home_score": None,
+                    "away_score": None,
+                    "partial_results": None,
+                    "venue": location.get("name"),
+                    "venue_town": address.get("addressLocality"),
+                    "venue_country": address.get("addressCountry"),
+                }
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+        self.logger.warning("No matching public SportsEvent metadata found")
+        return None

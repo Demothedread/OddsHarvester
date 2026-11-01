@@ -18,6 +18,7 @@ class TestBrowserHelper:
     def mock_page(self):
         """Create a mock Playwright page."""
         page = AsyncMock()
+        page.query_selector_all.return_value = []
         return page
 
     # =============================================================================

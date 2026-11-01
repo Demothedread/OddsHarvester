@@ -24,6 +24,7 @@ class TestNavigationManager:
     def page_mock(self):
         """Create a mock for the Playwright page."""
         mock = AsyncMock()
+        mock.query_selector_all.return_value = []
         mock.wait_for_timeout = AsyncMock()
         return mock
 

@@ -1,5 +1,6 @@
 from enum import Enum
 import logging
+import re
 import time
 
 from playwright.async_api import Page
@@ -226,6 +227,19 @@ class BrowserHelper:
             # Check if period selector nav exists
             period_container = await page.query_selector(OddsPortalSelectors.PERIOD_SELECTOR_CONTAINER)
             if not period_container:
+                for button in await page.query_selector_all(OddsPortalSelectors.PUBLIC_PERIOD_BUTTON_CSS):
+                    if (await button.text_content()).strip() != display_label:
+                        continue
+                    if not re.search(r"font-weight:\s*700", await button.get_attribute("style") or ""):
+                        await button.click()
+                        await page.wait_for_function(
+                            """({selector, label}) => [...document.querySelectorAll(selector)]
+                                .some(b => b.textContent.trim() === label &&
+                                    b.style.fontWeight === '700')""",
+                            arg={"selector": OddsPortalSelectors.PUBLIC_PERIOD_BUTTON_CSS, "label": display_label},
+                            timeout=PERIOD_SELECTOR_TIMEOUT_MS,
+                        )
+                    return True
                 self.logger.warning("Period selector navigation not found on page. Skipping period selection.")
                 return False
 
@@ -669,6 +683,15 @@ class BrowserHelper:
         try:
             # Wait a bit for the tab switch to complete
             await page.wait_for_timeout(TAB_SWITCH_WAIT_MS)
+
+            # Public tabs all appear in page content, including inactive ones.
+            # Never treat that presence as confirmation of a successful switch.
+            public_tabs = await page.query_selector_all(OddsPortalSelectors.PUBLIC_MARKET_TAB_CSS)
+            if public_tabs:
+                active_tab = await page.query_selector(OddsPortalSelectors.PUBLIC_ACTIVE_MARKET_CSS)
+                return bool(
+                    active_tab and (await active_tab.text_content()).strip().casefold() == market_tab_name.casefold()
+                )
 
             # Check for active tab indicators
             active_selectors = ["li.active", "li[class*='active']", ".active", "[class*='active']"]

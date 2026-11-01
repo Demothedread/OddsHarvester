@@ -5,6 +5,7 @@ import random
 from playwright.async_api import Page
 
 from oddsharvester.core.base_scraper import BaseScraper
+from oddsharvester.core.odds_portal_selectors import OddsPortalSelectors
 from oddsharvester.core.scrape_result import ScrapeResult
 from oddsharvester.core.url_builder import URLBuilder
 from oddsharvester.utils.bookies_filter_enum import BookiesFilter
@@ -176,7 +177,7 @@ class OddsPortalScraper(BaseScraper):
             timeout=30,
             scroll_pause_time=2,
             max_scroll_attempts=3,
-            content_check_selector="div[class*='eventRow']",
+            content_check_selector=OddsPortalSelectors.EVENT_LISTING_CONTENT_CSS,
         )
 
         match_links = await self.extract_match_links(page=current_page)
@@ -247,8 +248,8 @@ class OddsPortalScraper(BaseScraper):
         Args:
             page: Playwright page instance.
         """
-        await self.set_odds_format(page=page)
         await self.browser_helper.dismiss_cookie_banner(page=page)
+        await self.set_odds_format(page=page)
 
     async def _get_pagination_info(self, page: Page, max_pages: int | None) -> list[int]:
         """
@@ -368,7 +369,7 @@ class OddsPortalScraper(BaseScraper):
                     timeout=30,
                     scroll_pause_time=2,
                     max_scroll_attempts=3,
-                    content_check_selector="div[class*='eventRow']",
+                    content_check_selector=OddsPortalSelectors.EVENT_LISTING_CONTENT_CSS,
                 )
 
                 if scroll_success:

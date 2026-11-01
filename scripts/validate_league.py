@@ -14,17 +14,15 @@ Usage:
 import argparse
 import asyncio
 import logging
-import re
 import sys
 
-from bs4 import BeautifulSoup
 from playwright.async_api import Page
 
+from oddsharvester.core.base_scraper import BaseScraper
 from oddsharvester.core.browser_helper import BrowserHelper
 from oddsharvester.core.odds_portal_selectors import OddsPortalSelectors
 from oddsharvester.core.playwright_manager import PlaywrightManager
 from oddsharvester.core.url_builder import URLBuilder
-from oddsharvester.utils.constants import ODDSPORTAL_BASE_URL
 from oddsharvester.utils.proxy_manager import ProxyManager
 from oddsharvester.utils.sport_league_constants import SPORTS_LEAGUES_URLS_MAPPING
 from oddsharvester.utils.sport_market_constants import Sport
@@ -46,14 +44,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def extract_match_links(html_content: str) -> set[str]:
-    soup = BeautifulSoup(html_content, "lxml")
-    event_rows = soup.find_all(class_=re.compile(OddsPortalSelectors.EVENT_ROW_CLASS_PATTERN))
-    return {
-        f"{ODDSPORTAL_BASE_URL}{link['href']}"
-        for row in event_rows
-        for link in row.find_all("a", href=True)
-        if len(link["href"].strip("/").split("/")) > 3
-    }
+    return set(BaseScraper.parse_match_links(html_content))
 
 
 async def validate_one(page: Page, bh: BrowserHelper, sport: str, league: str, season: str | None) -> bool:
@@ -73,7 +64,7 @@ async def validate_one(page: Page, bh: BrowserHelper, sport: str, league: str, s
             timeout=30,
             scroll_pause_time=2,
             max_scroll_attempts=3,
-            content_check_selector="div[class*='eventRow']",
+            content_check_selector=OddsPortalSelectors.EVENT_LISTING_CONTENT_CSS,
         )
 
         html_content = await page.content()
@@ -127,7 +118,7 @@ async def run(args: argparse.Namespace) -> int:
 
     # Summary
     total = ok_count + ko_count
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"Results: {ok_count}/{total} OK, {ko_count} KO")
 
     return 0 if ko_count == 0 else 1

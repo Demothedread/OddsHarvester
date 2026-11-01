@@ -1,9 +1,10 @@
+from datetime import UTC, datetime
 import logging
 import re
-from datetime import UTC, datetime
 from typing import Any
 
 from bs4 import BeautifulSoup, Tag
+
 from oddsharvester.core.odds_portal_selectors import OddsPortalSelectors
 
 _FRACTIONAL_RE = re.compile(r"^(\d+)/(\d+)$")
@@ -47,6 +48,10 @@ class OddsParser:
         self.logger.info("Parsing odds from HTML content.")
         soup = BeautifulSoup(html_content, "html.parser")
 
+        public_rows = soup.select(OddsPortalSelectors.PUBLIC_BOOKMAKER_ROW_CSS)
+        if public_rows:
+            return self._parse_public_table_rows(public_rows, period, odds_labels, target_bookmaker)
+
         # Try broader "border-black-borders" pattern first as it works better
         bookmaker_blocks = soup.find_all("div", class_=re.compile(OddsPortalSelectors.BOOKMAKER_ROW_CLASS))
 
@@ -69,9 +74,7 @@ class OddsParser:
                 odds_blocks = block.find_all("div", class_=re.compile(OddsPortalSelectors.ODDS_BLOCK_CLASS_PATTERN))
 
                 if not odds_blocks:
-                    self.logger.warning(
-                        f"No odds values for bookmaker: {bookmaker_name}. Skipping..."
-                    )
+                    self.logger.warning(f"No odds values for bookmaker: {bookmaker_name}. Skipping...")
                     continue
 
                 if len(odds_blocks) < len(odds_labels):
@@ -101,6 +104,42 @@ class OddsParser:
                 continue
 
         self.logger.info(f"Successfully parsed odds for {len(odds_data)} bookmakers.")
+        return odds_data
+
+    def _parse_public_table_rows(
+        self, rows: list[Tag], period: str, odds_labels: list, target_bookmaker: str | None
+    ) -> list[dict[str, Any]]:
+        """Parse semantic odds cells; ignore handicap, payout, bonuses and H2H tables."""
+        odds_data = []
+        for row in rows:
+            # Outer expanded-market rows may contain a nested bookmaker table.
+            # Only direct cells belonging to this row may supply names/odds.
+            cells = row.find_all("td", recursive=False)
+            if len(cells) < 2:
+                continue
+            name = cells[0].select_one(OddsPortalSelectors.PUBLIC_BOOKMAKER_NAME_CSS)
+            if not name:
+                continue
+            bookmaker = name.get_text(strip=True)
+            if not bookmaker or (target_bookmaker and bookmaker.casefold() != target_bookmaker.casefold()):
+                continue
+            values = []
+            suspended = False
+            for cell in cells:
+                # Line cells share the odds-width class but lack an odds-value block.
+                value = cell.select_one(OddsPortalSelectors.PUBLIC_ODDS_VALUE_CSS)
+                if not value:
+                    continue
+                unavailable = bool(value.select_one(".line-through"))
+                suspended = suspended or unavailable
+                values.append(None if unavailable else value.get_text(strip=True))
+            if not values:
+                continue
+            entry = {label: values[i] if i < len(values) else None for i, label in enumerate(odds_labels)}
+            if suspended:
+                entry["is_suspended"] = True
+            entry.update(bookmaker_name=bookmaker, period=period)
+            odds_data.append(entry)
         return odds_data
 
     def parse_odds_history_modal(self, modal_html: str) -> dict[str, Any]:

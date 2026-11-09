@@ -182,7 +182,11 @@ class OddsPortalScraper(BaseScraper):
             content_check_selector=OddsPortalSelectors.EVENT_LISTING_CONTENT_CSS,
         )
 
-        match_links = await self.extract_match_links(page=current_page, days_ahead=days_ahead)
+        match_links = await self.extract_match_links(
+            page=current_page,
+            days_ahead=days_ahead,
+            exclude_finished=True,
+        )
 
         if not match_links:
             self.logger.warning("No match links found for upcoming matches.")

@@ -101,6 +101,10 @@ class OddsPortalSelectors:
     # A pair-only H2H URL is not a specific fixture.
     PUBLIC_MATCH_LINK_CSS = "a.group[href*='/h2h/'][href*='/#']"
     PUBLIC_MATCH_HREF_PATTERN = r"^/[a-z-]+/h2h/[^/?#]+-[A-Za-z0-9]{8}/[^/?#]+-[A-Za-z0-9]{8}/#[A-Za-z0-9]{8}$"
+    PUBLIC_COMPLETED_STATUS_PATTERN = (
+        r"^(?:finished|after\s+(?:ot|et|pen(?:alties)?\b)|aet|full\s*time|fulltime|postponed|cancelled|canceled|"
+        r"abandoned|awarded|walkover)\b"
+    )
     EVENT_LISTING_CONTENT_CSS = f"div[class*='eventRow'], {PUBLIC_MATCH_LINK_CSS}"
     # Public league listings group fixtures under "Today, 01 Nov" or "05 Nov 2026" headers.
     LISTING_DATE_HEADER_PATTERN = (

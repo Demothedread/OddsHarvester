@@ -158,6 +158,33 @@ def test_days_ahead_keeps_event_row_links_under_listing_date_headers():
     ) == [ODDSPORTAL_BASE_URL + "/american-football/h2h/team-a-AAAAAAAA/team-b-BBBBBBBB/#EVENTROW1"]
 
 
+def test_listing_skips_completed_fixtures_only_when_requested():
+    completed_statuses = ("Finished", "After OT", "After ET", "After Pen.")
+    event_links = [
+        f'<a class="group" href="/american-football/h2h/team-a-AAAAAAAA/team-b-BBBBBBBB/#{event_id}">'
+        f"<span>{status}</span><span>16 Team A - Team B 0</span></a>"
+        for event_id, status in zip(
+            ("FINISH01", "AFTEROT1", "AFTERET1", "AFTERPN1"),
+            completed_statuses,
+            strict=True,
+        )
+    ]
+    upcoming_link = (
+        '<a class="group" href="/american-football/h2h/team-c-CCCCCCCC/team-d-DDDDDDDD/#UPCOMING">'
+        "<p>18:20</p><span>Team C - Team D</span></a>"
+    )
+    html = "<div>Today, 01 Nov</div>" + "".join(event_links) + upcoming_link
+    expected_upcoming = ODDSPORTAL_BASE_URL + "/american-football/h2h/team-c-CCCCCCCC/team-d-DDDDDDDD/#UPCOMING"
+
+    assert BaseScraper.parse_match_links(
+        html,
+        reference_date=date(2026, 11, 1),
+        days_ahead=1,
+        exclude_finished=True,
+    ) == [expected_upcoming]
+    assert len(BaseScraper.parse_match_links(html)) == len(completed_statuses) + 1
+
+
 @pytest.mark.asyncio
 async def test_extract_match_links_uses_page_date_for_window():
     scraper = BaseScraper(MagicMock(), MagicMock(), MagicMock())

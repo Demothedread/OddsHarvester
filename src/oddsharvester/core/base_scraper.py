@@ -106,7 +106,12 @@ class BaseScraper:
         except Exception as e:
             self.logger.error(f"Error while setting odds format: {e}", exc_info=True)
 
-    async def extract_match_links(self, page: Page, days_ahead: int | None = None) -> list[str]:
+    async def extract_match_links(
+        self,
+        page: Page,
+        days_ahead: int | None = None,
+        exclude_finished: bool = False,
+    ) -> list[str]:
         """
         Extract and parse match links from the current page.
 
@@ -114,6 +119,7 @@ class BaseScraper:
             page (Page): A Playwright Page instance for this task.
             days_ahead (int | None): When set, keep only fixtures listed under date headers
                 from the page's current date through the following ``days_ahead - 1`` dates.
+            exclude_finished (bool): Exclude completed or otherwise terminal fixtures.
 
         Returns:
             List[str]: Unique match links in listing (chronological) order.
@@ -127,7 +133,12 @@ class BaseScraper:
                     "() => { const d = new Date(); return [d.getFullYear(), d.getMonth() + 1, d.getDate()]; }"
                 )
                 reference_date = date(year, month, day)
-            match_links = self.parse_match_links(html_content, reference_date=reference_date, days_ahead=days_ahead)
+            match_links = self.parse_match_links(
+                html_content,
+                reference_date=reference_date,
+                days_ahead=days_ahead,
+                exclude_finished=exclude_finished,
+            )
             window = f" within {days_ahead} day(s) from {reference_date}" if days_ahead is not None else ""
             self.logger.info(f"Extracted {len(match_links)} unique match links{window}.")
             return match_links
@@ -141,12 +152,14 @@ class BaseScraper:
         html_content: str,
         reference_date: date | None = None,
         days_ahead: int | None = None,
+        exclude_finished: bool = False,
     ) -> list[str]:
         """Parse legacy rows and public H2H fixture links without losing event IDs or listing order.
 
         Public league listings contain the whole remaining season, so ``days_ahead`` bounds
         the result to fixtures under date headers in ``[reference_date, reference_date + days_ahead)``.
         Undated links are excluded when a window is requested.
+        Set ``exclude_finished`` for upcoming listings; historic result collection keeps terminal rows by default.
         """
         soup = BeautifulSoup(html_content, "lxml")
         entries: dict[str, date | None] = {}
@@ -175,6 +188,12 @@ class BaseScraper:
                     )
                 )
                 if href and (href in legacy_match_hrefs or is_public_match):
+                    if exclude_finished and re.match(
+                        OddsPortalSelectors.PUBLIC_COMPLETED_STATUS_PATTERN,
+                        element.get_text(" ", strip=True),
+                        re.IGNORECASE,
+                    ):
+                        continue
                     # First occurrence wins; trailing summary blocks repeat links under later headers.
                     entries.setdefault(f"{ODDSPORTAL_BASE_URL}{href}", current_date)
             elif element.string and (header := header_pattern.match(element.string.strip())):
